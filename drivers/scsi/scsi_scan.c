@@ -260,6 +260,12 @@ static struct scsi_device *scsi_alloc_sdev(struct scsi_target *starget,
 	sdev->type = -1;
 
 	/*
+	 * security requests to unsupported devices should be ignored and thus
+	 * we can make it an opt-out option.
+	 */
+	sdev->security_supported = 1;
+
+	/*
 	 * Assume that the device will have handshaking problems,
 	 * and then fix this field later if it turns out it
 	 * doesn't
