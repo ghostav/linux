@@ -656,6 +656,9 @@ static int cmd_finalize(struct opal_dev *cmd, u32 hsn, u32 tsn)
 	struct opal_header *hdr;
 	int err = 0;
 
+	/* close the parameter list opened from cmd_start */
+	add_token_u8(&err, cmd, OPAL_ENDLIST);
+
 	add_token_u8(&err, cmd, OPAL_ENDOFDATA);
 	add_token_u8(&err, cmd, OPAL_STARTLIST);
 	add_token_u8(&err, cmd, 0);
@@ -1009,6 +1012,12 @@ static int cmd_start(struct opal_dev *dev, const u8 *uid, const u8 *method)
 	add_token_bytestring(&err, dev, uid, OPAL_UID_LENGTH);
 	add_token_bytestring(&err, dev, method, OPAL_METHOD_LENGTH);
 
+	/* every method call is followed by its parameters enclosed within
+	 * OPAL_STARTLIST and OPAL_ENDLIST tokens. We automatically open the
+	 * parameter list here and close it later in cmd_finalize
+	 */
+	add_token_u8(&err, dev, OPAL_STARTLIST);
+
 	return err;
 }
 
@@ -1082,9 +1091,6 @@ static int gen_key(struct opal_dev *dev, void *data)
 
 	err = cmd_start(dev, uid, opalmethod[OPAL_GENKEY]);
 
-	add_token_u8(&err, dev, OPAL_STARTLIST);
-	add_token_u8(&err, dev, OPAL_ENDLIST);
-
 	if (err) {
 		pr_debug("Error building gen key command\n");
 		return err;
@@ -1131,7 +1137,6 @@ static int get_active_key(struct opal_dev *dev, void *data)
 	err = cmd_start(dev, uid, opalmethod[OPAL_GET]);
 
 	add_token_u8(&err, dev, OPAL_STARTLIST);
-	add_token_u8(&err, dev, OPAL_STARTLIST);
 	add_token_u8(&err, dev, OPAL_STARTNAME);
 	add_token_u8(&err, dev, 3); /* startCloumn */
 	add_token_u8(&err, dev, 10); /* ActiveKey */
@@ -1140,7 +1145,6 @@ static int get_active_key(struct opal_dev *dev, void *data)
 	add_token_u8(&err, dev, 4); /* endColumn */
 	add_token_u8(&err, dev, 10); /* ActiveKey */
 	add_token_u8(&err, dev, OPAL_ENDNAME);
-	add_token_u8(&err, dev, OPAL_ENDLIST);
 	add_token_u8(&err, dev, OPAL_ENDLIST);
 	if (err) {
 		pr_debug("Error building get active key command\n");
@@ -1158,7 +1162,6 @@ static int generic_lr_enable_disable(struct opal_dev *dev,
 
 	err = cmd_start(dev, uid, opalmethod[OPAL_SET]);
 
-	add_token_u8(&err, dev, OPAL_STARTLIST);
 	add_token_u8(&err, dev, OPAL_STARTNAME);
 	add_token_u8(&err, dev, OPAL_VALUES);
 	add_token_u8(&err, dev, OPAL_STARTLIST);
@@ -1185,7 +1188,6 @@ static int generic_lr_enable_disable(struct opal_dev *dev,
 
 	add_token_u8(&err, dev, OPAL_ENDLIST);
 	add_token_u8(&err, dev, OPAL_ENDNAME);
-	add_token_u8(&err, dev, OPAL_ENDLIST);
 	return err;
 }
 
@@ -1218,7 +1220,6 @@ static int setup_locking_range(struct opal_dev *dev, void *data)
 	else {
 		err = cmd_start(dev, uid, opalmethod[OPAL_SET]);
 
-		add_token_u8(&err, dev, OPAL_STARTLIST);
 		add_token_u8(&err, dev, OPAL_STARTNAME);
 		add_token_u8(&err, dev, OPAL_VALUES);
 		add_token_u8(&err, dev, OPAL_STARTLIST);
@@ -1245,8 +1246,6 @@ static int setup_locking_range(struct opal_dev *dev, void *data)
 
 		add_token_u8(&err, dev, OPAL_ENDLIST);
 		add_token_u8(&err, dev, OPAL_ENDNAME);
-		add_token_u8(&err, dev, OPAL_ENDLIST);
-
 	}
 	if (err) {
 		pr_debug("Error building Setup Locking range command.\n");
@@ -1273,14 +1272,12 @@ static int start_generic_opal_session(struct opal_dev *dev,
 	err = cmd_start(dev, opaluid[OPAL_SMUID_UID],
 			opalmethod[OPAL_STARTSESSION]);
 
-	add_token_u8(&err, dev, OPAL_STARTLIST);
 	add_token_u64(&err, dev, hsn);
 	add_token_bytestring(&err, dev, opaluid[sp_type], OPAL_UID_LENGTH);
 	add_token_u8(&err, dev, 1);
 
 	switch (auth) {
 	case OPAL_ANYBODY_UID:
-		add_token_u8(&err, dev, OPAL_ENDLIST);
 		break;
 	case OPAL_ADMIN1_UID:
 	case OPAL_SID_UID:
@@ -1293,7 +1290,6 @@ static int start_generic_opal_session(struct opal_dev *dev,
 		add_token_bytestring(&err, dev, opaluid[auth],
 				     OPAL_UID_LENGTH);
 		add_token_u8(&err, dev, OPAL_ENDNAME);
-		add_token_u8(&err, dev, OPAL_ENDLIST);
 		break;
 	default:
 		pr_debug("Cannot start Admin SP session with auth %d\n", auth);
@@ -1353,24 +1349,21 @@ static int start_auth_opal_session(struct opal_dev *dev, void *data)
 	u8 *key = session->opal_key.key;
 	u32 hsn = GENERIC_HOST_SESSION_NUM;
 
-	if (session->sum) {
+	if (session->sum)
 		err = build_locking_user(lk_ul_user, sizeof(lk_ul_user),
 					 session->opal_key.lr);
-		if (err)
-			return err;
-
-	} else if (session->who != OPAL_ADMIN1 && !session->sum) {
+	else if (session->who != OPAL_ADMIN1 && !session->sum)
 		err = build_locking_user(lk_ul_user, sizeof(lk_ul_user),
 					 session->who - 1);
-		if (err)
-			return err;
-	} else
+	else
 		memcpy(lk_ul_user, opaluid[OPAL_ADMIN1_UID], OPAL_UID_LENGTH);
+
+	if (err)
+		return err;
 
 	err = cmd_start(dev, opaluid[OPAL_SMUID_UID],
 			opalmethod[OPAL_STARTSESSION]);
 
-	add_token_u8(&err, dev, OPAL_STARTLIST);
 	add_token_u64(&err, dev, hsn);
 	add_token_bytestring(&err, dev, opaluid[OPAL_LOCKINGSP_UID],
 			     OPAL_UID_LENGTH);
@@ -1383,7 +1376,6 @@ static int start_auth_opal_session(struct opal_dev *dev, void *data)
 	add_token_u8(&err, dev, 3);
 	add_token_bytestring(&err, dev, lk_ul_user, OPAL_UID_LENGTH);
 	add_token_u8(&err, dev, OPAL_ENDNAME);
-	add_token_u8(&err, dev, OPAL_ENDLIST);
 
 	if (err) {
 		pr_debug("Error building STARTSESSION command.\n");
@@ -1399,9 +1391,6 @@ static int revert_tper(struct opal_dev *dev, void *data)
 
 	err = cmd_start(dev, opaluid[OPAL_ADMINSP_UID],
 			opalmethod[OPAL_REVERT]);
-
-	add_token_u8(&err, dev, OPAL_STARTLIST);
-	add_token_u8(&err, dev, OPAL_ENDLIST);
 	if (err) {
 		pr_debug("Error building REVERT TPER command.\n");
 		return err;
@@ -1420,8 +1409,6 @@ static int internal_activate_user(struct opal_dev *dev, void *data)
 	uid[7] = session->who;
 
 	err = cmd_start(dev, uid, opalmethod[OPAL_SET]);
-
-	add_token_u8(&err, dev, OPAL_STARTLIST);
 	add_token_u8(&err, dev, OPAL_STARTNAME);
 	add_token_u8(&err, dev, OPAL_VALUES);
 	add_token_u8(&err, dev, OPAL_STARTLIST);
@@ -1431,7 +1418,6 @@ static int internal_activate_user(struct opal_dev *dev, void *data)
 	add_token_u8(&err, dev, OPAL_ENDNAME);
 	add_token_u8(&err, dev, OPAL_ENDLIST);
 	add_token_u8(&err, dev, OPAL_ENDNAME);
-	add_token_u8(&err, dev, OPAL_ENDLIST);
 
 	if (err) {
 		pr_debug("Error building Activate UserN command.\n");
@@ -1452,9 +1438,6 @@ static int erase_locking_range(struct opal_dev *dev, void *data)
 
 	err = cmd_start(dev, uid, opalmethod[OPAL_ERASE]);
 
-	add_token_u8(&err, dev, OPAL_STARTLIST);
-	add_token_u8(&err, dev, OPAL_ENDLIST);
-
 	if (err) {
 		pr_debug("Error building Erase Locking Range Command.\n");
 		return err;
@@ -1469,7 +1452,6 @@ static int set_mbr_done(struct opal_dev *dev, void *data)
 
 	err = cmd_start(dev, opaluid[OPAL_MBRCONTROL], opalmethod[OPAL_SET]);
 
-	add_token_u8(&err, dev, OPAL_STARTLIST);
 	add_token_u8(&err, dev, OPAL_STARTNAME);
 	add_token_u8(&err, dev, OPAL_VALUES);
 	add_token_u8(&err, dev, OPAL_STARTLIST);
@@ -1479,7 +1461,6 @@ static int set_mbr_done(struct opal_dev *dev, void *data)
 	add_token_u8(&err, dev, OPAL_ENDNAME);
 	add_token_u8(&err, dev, OPAL_ENDLIST);
 	add_token_u8(&err, dev, OPAL_ENDNAME);
-	add_token_u8(&err, dev, OPAL_ENDLIST);
 
 	if (err) {
 		pr_debug("Error Building set MBR Done command\n");
@@ -1496,7 +1477,6 @@ static int set_mbr_enable_disable(struct opal_dev *dev, void *data)
 
 	err = cmd_start(dev, opaluid[OPAL_MBRCONTROL], opalmethod[OPAL_SET]);
 
-	add_token_u8(&err, dev, OPAL_STARTLIST);
 	add_token_u8(&err, dev, OPAL_STARTNAME);
 	add_token_u8(&err, dev, OPAL_VALUES);
 	add_token_u8(&err, dev, OPAL_STARTLIST);
@@ -1506,7 +1486,6 @@ static int set_mbr_enable_disable(struct opal_dev *dev, void *data)
 	add_token_u8(&err, dev, OPAL_ENDNAME);
 	add_token_u8(&err, dev, OPAL_ENDLIST);
 	add_token_u8(&err, dev, OPAL_ENDNAME);
-	add_token_u8(&err, dev, OPAL_ENDLIST);
 
 	if (err) {
 		pr_debug("Error Building set MBR done command\n");
@@ -1523,7 +1502,6 @@ static int generic_pw_cmd(u8 *key, size_t key_len, u8 *cpin_uid,
 
 	err = cmd_start(dev, cpin_uid, opalmethod[OPAL_SET]);
 
-	add_token_u8(&err, dev, OPAL_STARTLIST);
 	add_token_u8(&err, dev, OPAL_STARTNAME);
 	add_token_u8(&err, dev, OPAL_VALUES);
 	add_token_u8(&err, dev, OPAL_STARTLIST);
@@ -1533,7 +1511,6 @@ static int generic_pw_cmd(u8 *key, size_t key_len, u8 *cpin_uid,
 	add_token_u8(&err, dev, OPAL_ENDNAME);
 	add_token_u8(&err, dev, OPAL_ENDLIST);
 	add_token_u8(&err, dev, OPAL_ENDNAME);
-	add_token_u8(&err, dev, OPAL_ENDLIST);
 
 	return err;
 }
@@ -1598,7 +1575,6 @@ static int add_user_to_lr(struct opal_dev *dev, void *data)
 
 	err = cmd_start(dev, lr_buffer, opalmethod[OPAL_SET]);
 
-	add_token_u8(&err, dev, OPAL_STARTLIST);
 	add_token_u8(&err, dev, OPAL_STARTNAME);
 	add_token_u8(&err, dev, OPAL_VALUES);
 
@@ -1636,7 +1612,6 @@ static int add_user_to_lr(struct opal_dev *dev, void *data)
 	add_token_u8(&err, dev, OPAL_ENDNAME);
 	add_token_u8(&err, dev, OPAL_ENDLIST);
 	add_token_u8(&err, dev, OPAL_ENDNAME);
-	add_token_u8(&err, dev, OPAL_ENDLIST);
 
 	if (err) {
 		pr_debug("Error building add user to locking range command.\n");
@@ -1676,7 +1651,6 @@ static int lock_unlock_locking_range(struct opal_dev *dev, void *data)
 
 	err = cmd_start(dev, lr_buffer, opalmethod[OPAL_SET]);
 
-	add_token_u8(&err, dev, OPAL_STARTLIST);
 	add_token_u8(&err, dev, OPAL_STARTNAME);
 	add_token_u8(&err, dev, OPAL_VALUES);
 	add_token_u8(&err, dev, OPAL_STARTLIST);
@@ -1693,7 +1667,6 @@ static int lock_unlock_locking_range(struct opal_dev *dev, void *data)
 
 	add_token_u8(&err, dev, OPAL_ENDLIST);
 	add_token_u8(&err, dev, OPAL_ENDNAME);
-	add_token_u8(&err, dev, OPAL_ENDLIST);
 
 	if (err) {
 		pr_debug("Error building SET command.\n");
@@ -1759,7 +1732,6 @@ static int activate_lsp(struct opal_dev *dev, void *data)
 		if (err)
 			return err;
 
-		add_token_u8(&err, dev, OPAL_STARTLIST);
 		add_token_u8(&err, dev, OPAL_STARTNAME);
 		add_token_u8(&err, dev, uint_3);
 		add_token_u8(&err, dev, 6);
@@ -1774,11 +1746,6 @@ static int activate_lsp(struct opal_dev *dev, void *data)
 		}
 		add_token_u8(&err, dev, OPAL_ENDLIST);
 		add_token_u8(&err, dev, OPAL_ENDNAME);
-		add_token_u8(&err, dev, OPAL_ENDLIST);
-
-	} else {
-		add_token_u8(&err, dev, OPAL_STARTLIST);
-		add_token_u8(&err, dev, OPAL_ENDLIST);
 	}
 
 	if (err) {
@@ -1817,7 +1784,6 @@ static int get_lsp_lifecycle(struct opal_dev *dev, void *data)
 	err = cmd_start(dev, opaluid[OPAL_LOCKINGSP_UID], opalmethod[OPAL_GET]);
 
 	add_token_u8(&err, dev, OPAL_STARTLIST);
-	add_token_u8(&err, dev, OPAL_STARTLIST);
 
 	add_token_u8(&err, dev, OPAL_STARTNAME);
 	add_token_u8(&err, dev, 3); /* Start Column */
@@ -1830,7 +1796,7 @@ static int get_lsp_lifecycle(struct opal_dev *dev, void *data)
 	add_token_u8(&err, dev, OPAL_ENDNAME);
 
 	add_token_u8(&err, dev, OPAL_ENDLIST);
-	add_token_u8(&err, dev, OPAL_ENDLIST);
+
 
 	if (err) {
 		pr_debug("Error Building GET Lifecycle Status command\n");
@@ -1872,7 +1838,6 @@ static int get_msid_cpin_pin(struct opal_dev *dev, void *data)
 	err = cmd_start(dev, opaluid[OPAL_C_PIN_MSID], opalmethod[OPAL_GET]);
 
 	add_token_u8(&err, dev, OPAL_STARTLIST);
-	add_token_u8(&err, dev, OPAL_STARTLIST);
 
 	add_token_u8(&err, dev, OPAL_STARTNAME);
 	add_token_u8(&err, dev, 3); /* Start Column */
@@ -1884,7 +1849,6 @@ static int get_msid_cpin_pin(struct opal_dev *dev, void *data)
 	add_token_u8(&err, dev, 3); /* Lifecycle Column */
 	add_token_u8(&err, dev, OPAL_ENDNAME);
 
-	add_token_u8(&err, dev, OPAL_ENDLIST);
 	add_token_u8(&err, dev, OPAL_ENDLIST);
 
 	if (err) {
