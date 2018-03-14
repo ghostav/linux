@@ -31,6 +31,7 @@
 
 #include "opal_proto.h"
 
+#define DEBUG
 #define IO_BUFFER_LENGTH 2048
 #define MAX_TOKS 64
 
@@ -726,6 +727,149 @@ static const struct opal_resp_tok *response_get_token(
 	return tok;
 }
 
+static size_t response_get_string(const struct parsed_resp *resp, int n,
+				  const char **store)
+{
+	u8 skip;
+	const struct opal_resp_tok *token;
+
+	*store = NULL;
+	if (!resp) {
+		pr_debug("Response is NULL\n");
+		return 0;
+	}
+
+	if (n > resp->num) {
+		pr_debug("Response has %d tokens. Can't access %d\n",
+			 resp->num, n);
+		return 0;
+	}
+
+	token = &resp->toks[n];
+	if (token->type != OPAL_DTA_TOKENID_BYTESTRING) {
+		pr_debug("Token is not a byte string!\n");
+		return 0;
+	}
+
+	switch (token->width) {
+	case OPAL_WIDTH_TINY:
+	case OPAL_WIDTH_SHORT:
+		skip = 1;
+		break;
+	case OPAL_WIDTH_MEDIUM:
+		skip = 2;
+		break;
+	case OPAL_WIDTH_LONG:
+		skip = 4;
+		break;
+	default:
+		pr_debug("Token has invalid width!\n");
+		return 0;
+	}
+
+	*store = token->pos + skip;
+	return token->len - skip;
+}
+
+static s64 response_get_s64(const struct parsed_resp *resp, int n)
+{
+	const struct opal_resp_tok *tok;
+
+	tok = response_get_token(resp, n);
+	if (IS_ERR(tok))
+		return 0;
+
+	if (tok->type != OPAL_DTA_TOKENID_SINT) {
+		pr_debug("Token %i is not int: %d\n",
+			 n, tok->type);
+		return 0;
+	}
+
+	if (tok->width != OPAL_WIDTH_TINY &&
+	    tok->width != OPAL_WIDTH_SHORT) {
+		pr_debug("Token %i is neither short nor tiny: %d\n",
+			 n, tok->width);
+		return 0;
+	}
+
+	return tok->stored.s;
+}
+
+static u64 response_get_u64(const struct parsed_resp *resp, int n)
+{
+	const struct opal_resp_tok *tok;
+
+	tok = response_get_token(resp, n);
+	if (IS_ERR(tok))
+		return 0;
+
+	if (tok->type != OPAL_DTA_TOKENID_UINT) {
+		pr_debug("Token %i is not int: %d\n",
+			 n, tok->type);
+		return 0;
+	}
+
+	if (tok->width != OPAL_WIDTH_TINY &&
+	    tok->width != OPAL_WIDTH_SHORT) {
+		pr_debug("Token %i is neither short nor tiny: %d\n",
+			 n, tok->width);
+		return 0;
+	}
+
+	return tok->stored.u;
+}
+
+static bool response_token_matches(const struct opal_resp_tok *token, u8 match)
+{
+	if (IS_ERR(token) ||
+	    token->type != OPAL_DTA_TOKENID_TOKEN ||
+	    token->pos[0] != match)
+		return false;
+	return true;
+}
+
+static void response_dump(const char *prefix, const struct parsed_resp *resp)
+{
+#ifdef DEBUG
+	const struct opal_resp_tok *tok;
+	const char *bs;
+	size_t len;
+	unsigned i;
+
+	for (i = 0; i < resp->num; ++i) {
+		tok = response_get_token(resp, i);
+		WARN_ON(IS_ERR(tok));
+		if (IS_ERR(tok))
+			break;
+		printk(prefix);
+		switch (tok->type) {
+		case OPAL_DTA_TOKENID_TOKEN:
+			pr_cont("token: %02hhx\n", tok->pos[0]);
+			break;
+		case OPAL_DTA_TOKENID_SINT:
+			pr_cont("signed: %lli\n", response_get_s64(resp, i));
+			break;
+		case OPAL_DTA_TOKENID_UINT:
+			pr_cont("unsigned: %llu\n", response_get_u64(resp, i));
+			break;
+		case OPAL_DTA_TOKENID_BYTESTRING:
+			len = response_get_string(resp, i, &bs);
+			print_hex_dump(KERN_CONT, "bytestring: ", DUMP_PREFIX_NONE,
+				       len, 1, bs, len, true);
+			break;
+		case OPAL_DTA_TOKENID_INVALID:
+			print_hex_dump(KERN_CONT, "invalid: ", DUMP_PREFIX_NONE,
+				       tok->len, 1, tok->pos, tok->len, true);
+			break;
+		default:
+			print_hex_dump(KERN_CONT, "unknown: ", DUMP_PREFIX_NONE,
+				       tok->len, 1, tok->pos, tok->len, true);
+			break;
+		}
+	}
+#endif
+}
+
 static ssize_t response_parse_tiny(struct opal_resp_tok *tok,
 				   const u8 *pos)
 {
@@ -886,73 +1030,9 @@ static int response_parse(const u8 *buf, size_t length,
 	}
 	resp->num = num_entries;
 
+	response_dump(KERN_NOTICE pr_fmt("< "), resp);
+
 	return 0;
-}
-
-static size_t response_get_string(const struct parsed_resp *resp, int n,
-				  const char **store)
-{
-	u8 skip;
-	const struct opal_resp_tok *tok;
-
-	*store = NULL;
-	tok = response_get_token(resp, n);
-	if (IS_ERR(tok))
-		return 0;
-
-	if (tok->type != OPAL_DTA_TOKENID_BYTESTRING) {
-		pr_debug("Token is not a byte string!\n");
-		return 0;
-	}
-
-	switch (tok->width) {
-	case OPAL_WIDTH_TINY:
-	case OPAL_WIDTH_SHORT:
-		skip = 1;
-		break;
-	case OPAL_WIDTH_MEDIUM:
-		skip = 2;
-		break;
-	case OPAL_WIDTH_LONG:
-		skip = 4;
-		break;
-	default:
-		pr_debug("Token has invalid width!\n");
-		return 0;
-	}
-
-	*store = tok->pos + skip;
-	return tok->len - skip;
-}
-
-static u64 response_get_u64(const struct parsed_resp *resp, int n)
-{
-	const struct opal_resp_tok *tok;
-
-	tok = response_get_token(resp, n);
-	if (IS_ERR(tok))
-		return 0;
-
-	if (tok->type != OPAL_DTA_TOKENID_UINT) {
-		pr_debug("Token is not unsigned it: %d\n", tok->type);
-		return 0;
-	}
-
-	if (tok->width != OPAL_WIDTH_TINY && tok->width != OPAL_WIDTH_SHORT) {
-		pr_debug("Atom is not short or tiny: %d\n", tok->width);
-		return 0;
-	}
-
-	return tok->stored.u;
-}
-
-static bool response_token_matches(const struct opal_resp_tok *token, u8 match)
-{
-	if (IS_ERR(token) ||
-	    token->type != OPAL_DTA_TOKENID_TOKEN ||
-	    token->pos[0] != match)
-		return false;
-	return true;
 }
 
 static u8 response_status(const struct parsed_resp *resp)
@@ -1074,6 +1154,11 @@ static int finalize_and_send(struct opal_dev *dev, cont_fn cont)
 	}
 
 	print_buffer(dev->cmd, dev->pos);
+
+#ifdef DEBUG
+	response_parse(dev->cmd, dev->pos, &dev->parsed);
+	response_dump(KERN_NOTICE pr_fmt("> "), &dev->parsed);
+#endif
 
 	return opal_send_recv(dev, cont);
 }
