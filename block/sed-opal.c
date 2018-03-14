@@ -31,7 +31,7 @@
 
 #include "opal_proto.h"
 
-#define DEBUG
+//#define DEBUG
 #define IO_BUFFER_LENGTH 2048
 #define MAX_TOKS 64
 
@@ -1991,6 +1991,21 @@ static int get_msid_cpin_pin(struct opal_dev *dev, void *data)
 	return 0;
 }
 
+static int dump_table(struct opal_dev *dev, void *data)
+{
+	u8 *uid = data;
+	int err;
+
+	err = start_opal_cmd(dev, uid, opalmethod[OPAL_GET]);
+
+	add_token_u8(&err, dev, OPAL_STARTLIST);
+	add_token_u8(&err, dev, OPAL_ENDLIST);
+	if (err)
+		return err;
+
+	return finalize_and_send(dev, parse_and_check_status);
+}
+
 static int end_opal_session(struct opal_dev *dev, void *data)
 {
 	int err = 0;
@@ -2444,6 +2459,24 @@ static int opal_activate_user(struct opal_dev *dev,
 	return ret;
 }
 
+static int opal_dump_table(struct opal_dev *dev, struct opal_table *table)
+{
+	const struct opal_step dump_steps[] = {
+		{ opal_discovery0, },
+		{ start_admin1LSP_opal_session, &table->key },
+		{ dump_table, table->uid },
+		{ end_opal_session, },
+		{ NULL, }
+	};
+	int ret;
+
+	mutex_lock(&dev->dev_lock);
+	setup_opal_dev(dev, dump_steps);
+	ret = next(dev);
+	mutex_unlock(&dev->dev_lock);
+	return ret;
+}
+
 bool opal_unlock_from_suspend(struct opal_dev *dev)
 {
 	struct opal_suspend_data *suspend;
@@ -2538,6 +2571,9 @@ int sed_ioctl(struct opal_dev *dev, unsigned int cmd, void __user *arg)
 		break;
 	case IOC_OPAL_SECURE_ERASE_LR:
 		ret = opal_secure_erase_locking_range(dev, p);
+		break;
+	case IOC_OPAL_DUMP_TABLE:
+		ret = opal_dump_table(dev, p);
 		break;
 	default:
 		break;

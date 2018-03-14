@@ -111,6 +111,11 @@ struct opal_shadow_mbr {
 	__u64 size;
 };
 
+struct opal_table {
+	struct opal_key key;
+	__u8 uid[8];
+};
+
 #define IOC_OPAL_SAVE		    _IOW('p', 220, struct opal_lock_unlock)
 #define IOC_OPAL_LOCK_UNLOCK	    _IOW('p', 221, struct opal_lock_unlock)
 #define IOC_OPAL_TAKE_OWNERSHIP	    _IOW('p', 222, struct opal_key)
@@ -125,5 +130,6 @@ struct opal_shadow_mbr {
 #define IOC_OPAL_SECURE_ERASE_LR    _IOW('p', 231, struct opal_session_info)
 #define IOC_OPAL_MBR_STATUS         _IOW('p', 232, struct opal_mbr_data)
 #define IOC_OPAL_WRITE_SHADOW_MBR   _IOW('p', 233, struct opal_shadow_mbr)
+#define IOC_OPAL_DUMP_TABLE         _IOW('p', 234, struct opal_table)
 
 #endif /* _UAPI_SED_OPAL_H */
