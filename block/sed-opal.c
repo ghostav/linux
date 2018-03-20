@@ -697,6 +697,11 @@ static const struct opal_resp_tok *response_get_token(
 {
 	const struct opal_resp_tok *tok;
 
+	if (!resp) {
+		pr_debug("Response is NULL\n");
+		return ERR_PTR(-EINVAL);
+	}
+
 	if (n >= resp->num) {
 		pr_debug("Token number doesn't exist: %d, resp: %d\n",
 			 n, resp->num);
@@ -883,11 +888,6 @@ static size_t response_get_string(const struct parsed_resp *resp, int n,
 
 	*store = NULL;
 
-	if (!resp) {
-		pr_debug("Response is NULL\n");
-		return 0;
-	}
-
 	tok = response_get_token(resp, n);
 	if (IS_ERR(tok))
 		return 0;
@@ -920,11 +920,6 @@ static size_t response_get_string(const struct parsed_resp *resp, int n,
 static u64 response_get_u64(const struct parsed_resp *resp, int n)
 {
 	const struct opal_resp_tok *tok;
-
-	if (!resp) {
-		pr_debug("Response is NULL\n");
-		return 0;
-	}
 
 	tok = response_get_token(resp, n);
 	if (IS_ERR(tok))
