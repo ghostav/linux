@@ -22,14 +22,15 @@
 #include <linux/kernel.h>
 
 struct opal_dev;
+struct device;
 
-typedef int (sec_send_recv)(void *data, u16 spsp, u8 secp, void *buffer,
-		size_t len, bool send);
+typedef int (sec_send_recv)(struct device *dev, u16 spsp, u8 secp,
+			    void *buffer, size_t len, bool send);
 
 #ifdef CONFIG_BLK_SED_OPAL
 void free_opal_dev(struct opal_dev *dev);
 bool opal_unlock_from_suspend(struct opal_dev *dev);
-struct opal_dev *init_opal_dev(void *data, sec_send_recv *send_recv);
+struct opal_dev *init_opal_dev(struct device *dev, sec_send_recv *send_recv);
 int sed_ioctl(struct opal_dev *dev, unsigned int cmd, void __user *ioctl_ptr);
 
 static inline bool is_sed_ioctl(unsigned int cmd)
@@ -72,6 +73,6 @@ static inline bool opal_unlock_from_suspend(struct opal_dev *dev)
 {
 	return false;
 }
-#define init_opal_dev(data, send_recv)		NULL
+#define init_opal_dev(kobject, send_recv)		NULL
 #endif /* CONFIG_BLK_SED_OPAL */
 #endif /* LINUX_OPAL_H */

@@ -82,7 +82,7 @@ struct opal_dev {
 	bool supported;
 	bool mbr_enabled;
 
-	void *data;
+	struct device *dev;
 	sec_send_recv *send_recv;
 
 	const struct opal_step *steps;
@@ -325,14 +325,14 @@ static u16 get_comid_v200(const void *data)
 
 static int opal_send_cmd(struct opal_dev *dev)
 {
-	return dev->send_recv(dev->data, dev->comid, TCG_SECP_01,
+	return dev->send_recv(dev->dev, dev->comid, TCG_SECP_01,
 			      dev->cmd, IO_BUFFER_LENGTH,
 			      true);
 }
 
 static int opal_recv_cmd(struct opal_dev *dev)
 {
-	return dev->send_recv(dev->data, dev->comid, TCG_SECP_01,
+	return dev->send_recv(dev->dev, dev->comid, TCG_SECP_01,
 			      dev->resp, IO_BUFFER_LENGTH,
 			      false);
 }
@@ -1975,7 +1975,7 @@ void free_opal_dev(struct opal_dev *dev)
 }
 EXPORT_SYMBOL(free_opal_dev);
 
-struct opal_dev *init_opal_dev(void *data, sec_send_recv *send_recv)
+struct opal_dev *init_opal_dev(struct device *device, sec_send_recv *send_recv)
 {
 	struct opal_dev *dev;
 
@@ -1985,7 +1985,7 @@ struct opal_dev *init_opal_dev(void *data, sec_send_recv *send_recv)
 
 	INIT_LIST_HEAD(&dev->unlk_lst);
 	mutex_init(&dev->dev_lock);
-	dev->data = data;
+	dev->dev = device;
 	dev->send_recv = send_recv;
 	if (check_opal_support(dev) != 0) {
 		pr_debug("Opal is not supported on this device\n");

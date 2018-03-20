@@ -1591,10 +1591,10 @@ static const struct pr_ops nvme_pr_ops = {
 };
 
 #ifdef CONFIG_BLK_SED_OPAL
-int nvme_sec_submit(void *data, u16 spsp, u8 secp, void *buffer, size_t len,
-		bool send)
+int nvme_sec_submit(struct kobject *kobj, u16 spsp, u8 secp, void *buffer,
+		    size_t len, bool send)
 {
-	struct nvme_ctrl *ctrl = data;
+	struct nvme_ctrl *ctrl;
 	struct nvme_command cmd;
 
 	memset(&cmd, 0, sizeof(cmd));
@@ -1606,6 +1606,7 @@ int nvme_sec_submit(void *data, u16 spsp, u8 secp, void *buffer, size_t len,
 	cmd.common.cdw10[0] = cpu_to_le32(((u32)secp) << 24 | ((u32)spsp) << 8);
 	cmd.common.cdw10[1] = cpu_to_le32(len);
 
+	ctrl = container_of(to_dev(kobj), struct nvme_ctrl, ctrl_device);
 	return __nvme_submit_sync_cmd(ctrl->admin_q, &cmd, NULL, buffer, len,
 				      ADMIN_TIMEOUT, NVME_QID_ANY, 1, 0);
 }

@@ -2327,7 +2327,8 @@ static void nvme_reset_work(struct work_struct *work)
 	if (dev->ctrl.oacs & NVME_CTRL_OACS_SEC_SUPP) {
 		if (!dev->ctrl.opal_dev)
 			dev->ctrl.opal_dev =
-				init_opal_dev(&dev->ctrl, &nvme_sec_submit);
+				init_opal_dev(&dev->ctrl.ctrl_device,
+					      &nvme_sec_submit);
 		else if (was_suspend)
 			opal_unlock_from_suspend(dev->ctrl.opal_dev);
 	} else {

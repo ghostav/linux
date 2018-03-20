@@ -639,10 +639,10 @@ static void scsi_disk_put(struct scsi_disk *sdkp)
 }
 
 #ifdef CONFIG_BLK_SED_OPAL
-static int sd_sec_submit(void *data, u16 spsp, u8 secp, void *buffer,
-		size_t len, bool send)
+static int sd_sec_submit(struct kobject *kobj, u16 spsp, u8 secp,
+			 void *buffer, size_t len, bool send)
 {
-	struct scsi_device *sdev = data;
+	struct scsi_device *sdev = to_scsi_dev(to_dev(kobj));
 	u8 cdb[12] = { 0, };
 	int ret;
 
@@ -3274,7 +3274,8 @@ static void sd_probe_async(void *data, async_cookie_t cookie)
 	sd_revalidate_disk(gd);
 
 	if (sdkp->security) {
-		sdkp->opal_dev = init_opal_dev(sdp, &sd_sec_submit);
+		sdkp->opal_dev = init_opal_dev(&sdp->sdev_gendev,
+					       &sd_sec_submit);
 		if (sdkp->opal_dev)
 			sd_printk(KERN_NOTICE, sdkp, "supports TCG Opal\n");
 	}
