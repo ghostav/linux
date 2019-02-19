@@ -99,12 +99,12 @@ out:
 	return ++printed;
 }
 
-int sample__fprintf_callchain(struct perf_sample *sample, int left_alignment,
-			      unsigned int print_opts, struct callchain_cursor *cursor,
-			      FILE *fp)
+static int __fprintf_callchain_link(u64 ip, struct map *map, struct symbol *symbol,
+				    const char *srcline, bool first, int left_alignment,
+				    unsigned int print_opts, FILE *fp)
 {
+	u64 addr = 0;
 	int printed = 0;
-	struct callchain_cursor_node *node;
 	int print_ip = print_opts & EVSEL__PRINT_IP;
 	int print_sym = print_opts & EVSEL__PRINT_SYM;
 	int print_dso = print_opts & EVSEL__PRINT_DSO;
@@ -115,63 +115,80 @@ int sample__fprintf_callchain(struct perf_sample *sample, int left_alignment,
 	int print_arrow = print_opts & EVSEL__PRINT_CALLCHAIN_ARROW;
 	int print_skip_ignored = print_opts & EVSEL__PRINT_SKIP_IGNORED;
 	char s = print_oneline ? ' ' : '\t';
-	bool first = true;
+	struct addr_location node_al;
+
+
+	if (symbol && symbol->ignore && print_skip_ignored)
+		return 0;
+
+	printed += fprintf(fp, "%-*.*s", left_alignment, left_alignment, " ");
+
+	if (print_arrow && !first)
+		printed += fprintf(fp, " <-");
+
+	if (print_ip)
+		printed += fprintf(fp, "%c%16" PRIx64, s, ip);
+
+	if (map)
+		addr = map->map_ip(map, ip);
+
+	if (print_sym) {
+		printed += fprintf(fp, " ");
+		node_al.addr = addr;
+		node_al.map  = map;
+
+		if (print_symoffset) {
+			printed += __symbol__fprintf_symname_offs(symbol, &node_al,
+								  print_unknown_as_addr,
+								  true, fp);
+		} else {
+			printed += __symbol__fprintf_symname(symbol, &node_al,
+							     print_unknown_as_addr,
+							     fp);
+		}
+	}
+
+	if (print_dso && (!symbol || !symbol->inlined)) {
+		printed += fprintf(fp, " (");
+		printed += map__fprintf_dsoname(map, fp);
+		printed += fprintf(fp, ")");
+	}
+
+	if (print_srcline && srcline)
+		printed += fprintf(fp, "\n  %s", srcline);
+	else if (print_srcline)
+		printed += map__fprintf_srcline(map, addr, "\n  ", fp);
+
+	if (symbol && symbol->inlined)
+		printed += fprintf(fp, " (inlined)");
+
+	if (!print_oneline)
+		printed += fprintf(fp, "\n");
+
+	return printed;
+}
+
+int sample__fprintf_callchain(struct perf_sample *sample, int left_alignment,
+			      unsigned int print_opts, struct callchain_cursor *cursor,
+			      FILE *fp)
+{
+	int printed = 0;
+	struct callchain_cursor_node *node;
 
 	if (sample->callchain) {
-		struct addr_location node_al;
-
 		callchain_cursor_commit(cursor);
 
 		while (1) {
-			u64 addr = 0;
-
 			node = callchain_cursor_current(cursor);
 			if (!node)
 				break;
 
-			if (node->sym && node->sym->ignore && print_skip_ignored)
-				goto next;
 
-			printed += fprintf(fp, "%-*.*s", left_alignment, left_alignment, " ");
-
-			if (print_arrow && !first)
-				printed += fprintf(fp, " <-");
-
-			if (print_ip)
-				printed += fprintf(fp, "%c%16" PRIx64, s, node->ip);
-
-			if (node->map)
-				addr = node->map->map_ip(node->map, node->ip);
-
-			if (print_sym) {
-				printed += fprintf(fp, " ");
-				node_al.addr = addr;
-				node_al.map  = node->map;
-
-				if (print_symoffset) {
-					printed += __symbol__fprintf_symname_offs(node->sym, &node_al,
-										  print_unknown_as_addr,
-										  true, fp);
-				} else {
-					printed += __symbol__fprintf_symname(node->sym, &node_al,
-									     print_unknown_as_addr, fp);
-				}
-			}
-
-			if (print_dso && (!node->sym || !node->sym->inlined)) {
-				printed += fprintf(fp, " (");
-				printed += map__fprintf_dsoname(node->map, fp);
-				printed += fprintf(fp, ")");
-			}
-
-			if (print_srcline)
-				printed += map__fprintf_srcline(node->map, addr, "\n  ", fp);
-
-			if (node->sym && node->sym->inlined)
-				printed += fprintf(fp, " (inlined)");
-
-			if (!print_oneline)
-				printed += fprintf(fp, "\n");
+			printed += __fprintf_callchain_link(node->ip, node->map,
+							    node->sym, NULL,
+							    (printed == 0),
+							    left_alignment,
+							    print_opts, fp);
 
 			/* Add srccode here too? */
 			if (symbol_conf.bt_stop_list &&
@@ -181,8 +198,6 @@ int sample__fprintf_callchain(struct perf_sample *sample, int left_alignment,
 				break;
 			}
 
-			first = false;
-next:
 			callchain_cursor_advance(cursor);
 		}
 	}
