@@ -270,4 +270,7 @@ static inline bool is_entry_trampoline(const char *name)
 	return !strcmp(name, ENTRY_TRAMPOLINE_NAME);
 }
 
+struct inline_node *map__inlines(struct map *map, u64 addr,
+				 struct symbol *sym);
+
 #endif /* __PERF_MAP_H */

@@ -988,3 +988,26 @@ struct map_groups *map__kmaps(struct map *map)
 	}
 	return kmap->kmaps;
 }
+
+struct inline_node *map__inlines(struct map *map, u64 addr, struct symbol *sym)
+{
+	struct inline_node *node;
+
+	if (!symbol_conf.inline_name)
+		return NULL;
+
+	if (!map->dso)
+		return NULL;
+
+	addr = map->map_ip(map, addr);
+	addr = map__rip_2objdump(map, addr);
+
+	node = inlines__tree_find(&map->dso->inlined_nodes, addr);
+	if (node)
+		return node;
+
+	node = dso__parse_addr_inlines(map->dso, addr, sym);
+	if (node)
+		inlines__tree_insert(&map->dso->inlined_nodes, node);
+	return node;
+}
