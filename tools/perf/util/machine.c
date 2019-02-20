@@ -1908,6 +1908,90 @@ struct iterations {
 	u64 cycles;
 };
 
+static void __update_parent_and_root(struct addr_location *al,
+				     struct symbol **parent,
+				     struct addr_location *root_al,
+				     struct callchain_cursor *cursor)
+{
+	if (!al->sym)
+		return;
+	if (perf_hpp_list.parent && !*parent &&
+	  symbol__match_regex(al->sym, &parent_regex))
+		*parent = al->sym;
+	else if (have_ignore_callees && root_al &&
+	  symbol__match_regex(al->sym, &ignore_callees_regex)) {
+		/* Treat this symbol as the root,
+		   forgetting its callees. */
+		*root_al = *al;
+		callchain_cursor_reset(cursor);
+	}
+}
+
+static int __add_callchain_location(struct callchain_cursor *cursor,
+				    u64 addr, struct addr_location *al,
+				    bool branch, struct branch_flags *flags,
+				    u64 branch_from, struct iterations *iter)
+{
+	int nr_loop_iter = 0;
+	u64 iter_cycles = 0;
+
+	if (iter) {
+		nr_loop_iter = iter->nr_loop_iter;
+		iter_cycles = iter->cycles;
+	}
+	return callchain_cursor_append(cursor, addr, al->map, al->sym, branch,
+				       flags, nr_loop_iter, iter_cycles,
+				       branch_from, al->srcline);
+}
+
+static int __add_callchain_ip(struct callchain_cursor *cursor, u64 ip,
+			      struct addr_location *al, bool branch,
+			      struct branch_flags *flags, u64 branch_from,
+			      struct iterations *iter, struct symbol **parent,
+			      struct addr_location *root_al)
+{
+	struct inline_node *node;
+	struct inline_list *list;
+	int ret;
+
+	if (!al->map || !al->sym)
+		goto no_inline;
+
+	node = map__inlines(al->map, ip, al->sym);
+	if (node == NULL)
+		goto no_inline;
+
+	if (callchain_param.order != ORDER_CALLEE) {
+		__update_parent_and_root(al, parent, root_al, cursor);
+		list_for_each_entry(list, &node->val, list) {
+			al->sym = list->symbol;
+			al->srcline = list->srcline;
+			ret = __add_callchain_location(cursor, ip, al, branch,
+						       flags, branch_from, iter);
+			if (ret)
+				break;
+		}
+	} else {
+		list_for_each_entry_reverse(list, &node->val, list) {
+			al->sym = list->symbol;
+			al->srcline = list->srcline;
+			ret = __add_callchain_location(cursor, ip, al, branch,
+						       flags, branch_from, iter);
+			if (ret)
+				return ret;
+		}
+		__update_parent_and_root(al, parent, root_al, cursor);
+	}
+	return ret;
+
+no_inline:
+	al->srcline = callchain_srcline(al->map, al->sym, al->addr);
+	__update_parent_and_root(al, parent, root_al, cursor);
+	return __add_callchain_location(cursor, ip, al, branch,
+					flags, branch_from, iter);
+}
+
+
 static int add_callchain_ip(struct thread *thread,
 			    struct callchain_cursor *cursor,
 			    struct symbol **parent,
@@ -1920,9 +2004,6 @@ static int add_callchain_ip(struct thread *thread,
 			    u64 branch_from)
 {
 	struct addr_location al;
-	int nr_loop_iter = 0;
-	u64 iter_cycles = 0;
-	const char *srcline = NULL;
 
 	al.filtered = 0;
 	al.sym = NULL;
@@ -1955,31 +2036,11 @@ static int add_callchain_ip(struct thread *thread,
 		thread__find_symbol(thread, *cpumode, ip, &al);
 	}
 
-	if (al.sym != NULL) {
-		if (perf_hpp_list.parent && !*parent &&
-		    symbol__match_regex(al.sym, &parent_regex))
-			*parent = al.sym;
-		else if (have_ignore_callees && root_al &&
-		  symbol__match_regex(al.sym, &ignore_callees_regex)) {
-			/* Treat this symbol as the root,
-			   forgetting its callees. */
-			*root_al = al;
-			callchain_cursor_reset(cursor);
-		}
-	}
-
 	if (symbol_conf.hide_unresolved && al.sym == NULL)
 		return 0;
 
-	if (iter) {
-		nr_loop_iter = iter->nr_loop_iter;
-		iter_cycles = iter->cycles;
-	}
-
-	srcline = callchain_srcline(al.map, al.sym, al.addr);
-	return callchain_cursor_append(cursor, ip, al.map, al.sym,
-				       branch, flags, nr_loop_iter,
-				       iter_cycles, branch_from, srcline);
+	return __add_callchain_ip(cursor, ip, &al, branch, flags, branch_from,
+				  iter, parent, root_al);
 }
 
 struct branch_info *sample__resolve_bstack(struct perf_sample *sample,
