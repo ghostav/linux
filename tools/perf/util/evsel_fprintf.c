@@ -168,52 +168,6 @@ static int __fprintf_callchain_link(u64 ip, struct map *map, struct symbol *symb
 	return printed;
 }
 
-static int __fprintf_callchain(struct callchain_cursor_node *node, bool first,
-			       int left_alignment, unsigned int print_opts,
-			       FILE *fp)
-{
-	int printed = 0;
-	struct inline_node *inline_node;
-	struct inline_list *ilist;
-	u64 addr;
-
-	if (!symbol_conf.inline_name)
-		goto no_inline;
-
-	if (!node->map || !node->map->dso)
-		goto no_inline;
-
-	addr = node->map->map_ip(node->map, node->ip);
-	addr = map__rip_2objdump(node->map, addr);
-
-	inline_node = inlines__tree_find(&node->map->dso->inlined_nodes,
-					 addr);
-	if (!inline_node) {
-		inline_node = dso__parse_addr_inlines(node->map->dso,
-						      addr, node->sym);
-		if (!inline_node)
-			goto no_inline;
-		inlines__tree_insert(&node->map->dso->inlined_nodes,
-				     inline_node);
-	}
-
-	list_for_each_entry(ilist, &inline_node->val, list) {
-		printed += __fprintf_callchain_link(node->ip, node->map,
-						    ilist->symbol,
-						    ilist->srcline,
-						    first, left_alignment,
-						    print_opts, fp);
-		first = (first && printed == 0);
-	}
-
-	return printed;
-
-no_inline:
-	return __fprintf_callchain_link(node->ip, node->map, node->sym,
-					NULL, first, left_alignment,
-					print_opts, fp);
-}
-
 int sample__fprintf_callchain(struct perf_sample *sample, int left_alignment,
 			      unsigned int print_opts, struct callchain_cursor *cursor,
 			      FILE *fp)
@@ -229,9 +183,12 @@ int sample__fprintf_callchain(struct perf_sample *sample, int left_alignment,
 			if (!node)
 				break;
 
-			printed += __fprintf_callchain(node, (printed == 0),
-						       left_alignment,
-						       print_opts, fp);
+
+			printed += __fprintf_callchain_link(node->ip, node->map,
+							    node->sym, NULL,
+							    (printed == 0),
+							    left_alignment,
+							    print_opts, fp);
 
 			/* Add srccode here too? */
 			if (symbol_conf.bt_stop_list &&
