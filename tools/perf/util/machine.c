@@ -1961,8 +1961,7 @@ static int __add_callchain_ip(struct callchain_cursor *cursor, u64 ip,
 	if (node == NULL)
 		goto no_inline;
 
-	if (callchain_param.order != ORDER_CALLEE) {
-		__update_parent_and_root(al, parent, root_al, cursor);
+	if (callchain_param.order == ORDER_CALLEE) {
 		list_for_each_entry(list, &node->val, list) {
 			al->sym = list->symbol;
 			al->srcline = list->srcline;
@@ -1971,7 +1970,9 @@ static int __add_callchain_ip(struct callchain_cursor *cursor, u64 ip,
 			if (ret)
 				break;
 		}
+		__update_parent_and_root(al, parent, root_al, cursor);
 	} else {
+		__update_parent_and_root(al, parent, root_al, cursor);
 		list_for_each_entry_reverse(list, &node->val, list) {
 			al->sym = list->symbol;
 			al->srcline = list->srcline;
@@ -1980,7 +1981,6 @@ static int __add_callchain_ip(struct callchain_cursor *cursor, u64 ip,
 			if (ret)
 				return ret;
 		}
-		__update_parent_and_root(al, parent, root_al, cursor);
 	}
 	return ret;
 
