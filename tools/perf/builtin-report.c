@@ -233,8 +233,6 @@ static int process_sample_event(struct perf_tool *tool,
 {
 	struct report *rep = container_of(tool, struct report, tool);
 	struct addr_location al;
-	struct inline_node *inline_node;
-	struct inline_list *inline_list;
 	struct hist_entry_iter iter = {
 		.evsel 			= evsel,
 		.sample 		= sample,
@@ -278,20 +276,8 @@ static int process_sample_event(struct perf_tool *tool,
 		iter.ops = &hist_iter_normal;
 	}
 
-	if (al.map != NULL) {
-		u64 addr;
+	if (al.map != NULL)
 		al.map->dso->hit = 1;
-
-		addr = al.map->unmap_ip(al.map, al.addr);
-		inline_node = map__inlines(al.map, addr, al.sym);
-		if (inline_node && !list_empty(&inline_node->val)) {
-			inline_list = list_last_entry(&inline_node->val,
-						      struct inline_list,
-						      list);
-			al.sym = inline_list->symbol;
-			al.srcline = inline_list->srcline;
-		}
-	}
 
 	ret = hist_entry_iter__add(&iter, &al, rep->max_stack, rep);
 	if (ret < 0)
