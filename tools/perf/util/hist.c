@@ -623,6 +623,9 @@ __hists__add_entry(struct hists *hists,
 		.ops = ops,
 	}, *he = hists__findnew_entry(hists, &entry, al, sample_self);
 
+	if (he && he->srcline != entry.srcline)
+		free(entry.srcline);
+
 	if (!hists->has_callchains && he && he->callchain_size != 0)
 		hists->has_callchains = true;
 	return he;
