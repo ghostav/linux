@@ -2395,22 +2395,11 @@ static int append_inlines(struct callchain_cursor *cursor,
 {
 	struct inline_node *inline_node;
 	struct inline_list *ilist;
-	u64 addr;
 	int ret = 1;
 
-	if (!symbol_conf.inline_name || !map || !sym)
+	inline_node = map__inlines(map, ip, sym);
+	if (!inline_node)
 		return ret;
-
-	addr = map__map_ip(map, ip);
-	addr = map__rip_2objdump(map, addr);
-
-	inline_node = inlines__tree_find(&map->dso->inlined_nodes, addr);
-	if (!inline_node) {
-		inline_node = dso__parse_addr_inlines(map->dso, addr, sym);
-		if (!inline_node)
-			return ret;
-		inlines__tree_insert(&map->dso->inlined_nodes, inline_node);
-	}
 
 	list_for_each_entry(ilist, &inline_node->val, list) {
 		ret = callchain_cursor_append(cursor, ip, map,
