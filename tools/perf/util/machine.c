@@ -1908,32 +1908,31 @@ struct iterations {
 	u64 cycles;
 };
 
-static void __update_parent_and_root(struct addr_location *al,
-				     struct symbol **parent,
-				     struct addr_location *root_al,
-				     struct callchain_cursor *cursor)
-{
-	if (!al->sym)
-		return;
-	if (perf_hpp_list.parent && !*parent &&
-	  symbol__match_regex(al->sym, &parent_regex))
-		*parent = al->sym;
-	else if (have_ignore_callees && root_al &&
-	  symbol__match_regex(al->sym, &ignore_callees_regex)) {
-		/* Treat this symbol as the root,
-		   forgetting its callees. */
-		*root_al = *al;
-		callchain_cursor_reset(cursor);
-	}
-}
-
 static int __add_callchain_location(struct callchain_cursor *cursor,
+				    struct symbol **parent,
+				    struct addr_location *root_al,
 				    u64 addr, struct addr_location *al,
 				    bool branch, struct branch_flags *flags,
 				    u64 branch_from, struct iterations *iter)
 {
 	int nr_loop_iter = 0;
 	u64 iter_cycles = 0;
+
+	if (symbol_conf.hide_unresolved && al->sym == NULL)
+		return 0;
+
+	if (al->sym) {
+		if (perf_hpp_list.parent && !*parent &&
+		  symbol__match_regex(al->sym, &parent_regex))
+			*parent = al->sym;
+		else if (have_ignore_callees && root_al &&
+		  symbol__match_regex(al->sym, &ignore_callees_regex)) {
+			/* Treat this symbol as the root,
+			   forgetting its callees. */
+			*root_al = *al;
+			callchain_cursor_reset(cursor);
+		}
+	}
 
 	if (iter) {
 		nr_loop_iter = iter->nr_loop_iter;
@@ -1950,45 +1949,53 @@ static int __add_callchain_ip(struct callchain_cursor *cursor, u64 ip,
 			      struct iterations *iter, struct symbol **parent,
 			      struct addr_location *root_al)
 {
-	struct inline_node *node;
-	struct inline_list *list;
-	int ret;
+	struct inline_node *inline_node;
+	struct inline_list *inline_list;
+	const char *srcline;
+	struct symbol *symbol;
+	int err;
+
+	al->srcline = callchain_srcline(al->map, al->sym, al->addr);
+	if (callchain_param.order == ORDER_CALLER) {
+		/* all inlined symbols are 'called' */
+		err = __add_callchain_location(cursor, parent, root_al, ip, al,
+					       branch, flags, branch_from, iter);
+		if (err)
+			return err;
+	}
 
 	if (!al->map || !al->sym)
 		goto no_inline;
 
-	node = map__inlines(al->map, ip, al->sym);
-	if (node == NULL)
+	inline_node = map__inlines(al->map, ip, al->sym);
+	if (!inline_node || list_empty(&inline_node->val))
 		goto no_inline;
 
-	if (callchain_param.order == ORDER_CALLEE) {
-		list_for_each_entry(list, &node->val, list) {
-			al->sym = list->symbol;
-			al->srcline = list->srcline;
-			ret = __add_callchain_location(cursor, ip, al, branch,
-						       flags, branch_from, iter);
-			if (ret)
-				break;
-		}
-		__update_parent_and_root(al, parent, root_al, cursor);
-	} else {
-		__update_parent_and_root(al, parent, root_al, cursor);
-		list_for_each_entry_reverse(list, &node->val, list) {
-			al->sym = list->symbol;
-			al->srcline = list->srcline;
-			ret = __add_callchain_location(cursor, ip, al, branch,
-						       flags, branch_from, iter);
-			if (ret)
-				return ret;
-		}
+	symbol = al->sym;
+	srcline = al->srcline;
+	list_for_each_entry(inline_list, &inline_node->val, list) {
+		if (inline_list->symbol == symbol)
+			continue;
+		al->sym = inline_list->symbol;
+		al->srcline = inline_list->srcline;
+		err = __add_callchain_location(cursor, parent, root_al, ip,
+					       al, branch, flags,
+					       branch_from, iter);
+		if (err)
+			return err;
 	}
-	return ret;
+
+	if (callchain_param.order == ORDER_CALLEE) {
+		al->srcline = srcline;
+		al->sym = symbol;
+	}
 
 no_inline:
-	al->srcline = callchain_srcline(al->map, al->sym, al->addr);
-	__update_parent_and_root(al, parent, root_al, cursor);
-	return __add_callchain_location(cursor, ip, al, branch,
-					flags, branch_from, iter);
+	if (callchain_param.order == ORDER_CALLEE) {
+		err = __add_callchain_location(cursor, parent, root_al, ip, al,
+					       branch, flags, branch_from, iter);
+	}
+	return err;
 }
 
 
@@ -2035,9 +2042,6 @@ static int add_callchain_ip(struct thread *thread,
 		}
 		thread__find_symbol(thread, *cpumode, ip, &al);
 	}
-
-	if (symbol_conf.hide_unresolved && al.sym == NULL)
-		return 0;
 
 	return __add_callchain_ip(cursor, ip, &al, branch, flags, branch_from,
 				  iter, parent, root_al);
